@@ -18,6 +18,7 @@ void init_defaults(params_t *params) {
   params->sthread          = 0;
   params->nocheck          = 1;
   params->loginfo          = 0;
+  params->backup_enabled   = 1;
   params->logfile          = NULL;
   params->configfile       = gk_strdup("/srvdata/tokenization_server/cfg/tokserver.cfg");
   params->journaldir       = gk_strdup("/srvdata/tokenization_server/journals");

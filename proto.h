@@ -45,6 +45,8 @@ xmlrpc_value *dict_SetStem      (xmlrpc_env *const env, xmlrpc_value *const para
 xmlrpc_value *dict_GetStats     (xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
 xmlrpc_value *dict_Get_Meta     (xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
 xmlrpc_value *dict_Get_Stoplist (xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo); 
+xmlrpc_value *dict_pause_backup (xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
+xmlrpc_value *dict_resume_backup(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
 
 /* internal methods */
 int  verify_dict();

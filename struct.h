@@ -75,6 +75,7 @@ typedef struct {
 
   int verbosity;
   int nocheck;
+  int backup_enabled;
 
   char *dictdir;
   char *journaldir;

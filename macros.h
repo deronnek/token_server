@@ -168,9 +168,9 @@
            xmlrpc_env_set_fault_formatted(env, -200, "[%s] %s", oldstr, msg); \
            free(oldstr);\
         }\
-        else xmlrpc_env_set_fault_formatted(env, -200, msg); \
+        else xmlrpc_env_set_fault_formatted(env, -200, "%s", msg); \
       }\
-      else xmlrpc_env_set_fault_formatted(env, -200, msg); \
+      else xmlrpc_env_set_fault_formatted(env, -200, "%s", msg); \
       goto ERROR_EXIT;\
     }\
   }\

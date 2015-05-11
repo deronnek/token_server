@@ -146,6 +146,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   int rc;
 
   dict->dict     = NULL;
+  dict->rdict    = NULL;
   dict->stophash = NULL;
   xmlrpc_decompose_value(env, params, "({s:s,*})", "name",             &dict_name);
   xmlrpc_decompose_value(env, params, "({s:s,*})", "tokregex",         &tokregex);
@@ -177,7 +178,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
     goto ERROR_EXIT;
   }
 
-  printf("Stopwords: --%s--\n",stoplist);
+  printf("Stopwords: |%s|\n",stoplist);
 
   /* write a config file for this dictionary */
   asprintf(&dict_filename,"%s/%s.toksrv.dict", ServerState.dictdir, dict_name);
@@ -217,7 +218,8 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   dict->cacherequest = 0;
 
   dict->dict         = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-  dict->rdict        = db_Open(rdict_filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+  dict->rdict        = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+
   if(dostop == 1) {
     dict->stophash   = stoplist_create(gk_strdup(stoplist), stopdelim, gk_strdup(add_stop), gk_strdup(del_stop));
   }
@@ -315,25 +317,33 @@ xmlrpc_value *dict_Delete(xmlrpc_env *const env, xmlrpc_value *const params, voi
     i++;
   }
   */
+
   p = (hash_t *)hash_Get(dict->stophash, (void *)"precise", -1, NULL);
-  memcpy(&tmphash, p, sizeof(hash_t *));
-  hash_Destroy(tmphash);
+  if(p)  {
+    memcpy(&tmphash, p, sizeof(hash_t *));
+    hash_Destroy(tmphash);
+  }
 
   p = (hash_t *)hash_Get(dict->stophash, (void *)"stemmed", -1, NULL);
-  memcpy(&tmphash, p, sizeof(hash_t *));
-  hash_Destroy(tmphash);
+  if(p) {
+    memcpy(&tmphash, p, sizeof(hash_t *));
+    hash_Destroy(tmphash);
+  }
 
   p = (hash_t *)hash_Get(dict->stophash, (void *)"plain", -1, NULL);
-  memcpy(&tmphash, p, sizeof(hash_t *));
-  hash_Destroy(tmphash);
-
+  if(p) {
+    memcpy(&tmphash, p, sizeof(hash_t *));
+    hash_Destroy(tmphash);
+  }
 
   hhash_Close(dict->dict);
+  db_Close(dict->rdict);
   hash_Destroy(dict->stophash);
-
 
   unlink(dict->configfile);
   unlink(dict->filename);
+  unlink(dict->rfilename);
+
   RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 0;
   /* should we delete the backup file as well? */
 
@@ -515,6 +525,14 @@ xmlrpc_value *dict_Get_Stoplist(xmlrpc_env *const env, xmlrpc_value *const param
   RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 0;
 
   RDLOCK_OR_FAIL(&dict->dictstate_rwlock); hasdlock = 1;
+
+  if(dict->dostop != 1) {
+    asprintf(&r_string, "Dictionary %s does not use a stop list.\n",dict_name);
+    xmlrpc_env_set_fault_formatted(env, -404, "%s", r_string); 
+    ret = xmlrpc_build_value(env, "s", r_string);
+    gk_free((void **)&r_string, LTERM);
+    goto ERROR_EXIT;
+  }
 
   if(dict->dostop == 1) {
     
@@ -1122,6 +1140,32 @@ void dict_restore(xmlrpc_env *env, dict_t *dict)
   gk_free((void **)&tmp, LTERM);
 } /* }}} */
 
+xmlrpc_value *dict_pause_backup(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *callInfo) 
+{
+  LOCK_OR_FAIL(&ServerState.srvstate_mutex);
+  ServerState.backup_enabled = 0;
+  UNLOCK_OR_FAIL(&ServerState.srvstate_mutex);
+
+  LOGMSG("Dictionary backup paused.");
+  return xmlrpc_build_value(env, "{s:s}", "status", "Dictionary backup paused.");
+
+  ERROR_EXIT:
+    return NULL;
+}
+
+xmlrpc_value *dict_resume_backup(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *callInfo) 
+{
+  LOCK_OR_FAIL(&ServerState.srvstate_mutex);
+  ServerState.backup_enabled = 1;
+  UNLOCK_OR_FAIL(&ServerState.srvstate_mutex);
+
+  LOGMSG("Dictionary backup resumed.");
+  return xmlrpc_build_value(env, "{s:s}", "status", "Dictionary backup resumed.");
+
+  ERROR_EXIT:
+    return NULL;
+}
+
 /*******************************************************************************
 *! Every 30 minutes (1800 seconds), lock a database, close out the database, copy 
 *  the database to a backup file, clear its respective journals, re-open the 
@@ -1144,84 +1188,92 @@ void *dict_backup(void *void_env)
     /* sleep first so we don't automatically create a backup at startup */
     pthread_sleep(1800);
     //pthread_sleep(10);
+    //
+    LOCK_OR_FAIL(&ServerState.srvstate_mutex);
+    if(ServerState.backup_enabled) {
+      RDLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
+      //LOGMSG("Auto-backing up dictionaries");
+      keyslist = hash_GetKeys(ServerState.dtionaries);
+      if(list_Size(keyslist) > 0) {
+        for(i=0; keyslist && i<list_Size(keyslist); i++) {
+
+          p = hash_Get(ServerState.dtionaries, (void *)list_GetIth(keyslist,i,NULL), -1, NULL);
+          /* hash_Get returns a pointer to an address.  this sets dict equal to that address */
+          memcpy(&dict, p, sizeof(dict_t *));
+
+          asprintf(&needle,"%s.toksrv.journal",dict->name);
+
+          /* only get the disk lock, allowing cache hits to continue */
+          FAIL_IFTRUE(hhash_disk_wr_lock(dict->dict),"Failed to get disk rw lock");
+          retry = 1;
+          while(retry == 1) {
+            retry = !db_Close(dict->dict->diskhash);
+            if(retry == 1) {
+              LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
+              pthread_sleep(3);
+            }
+            else {
+              dict->dict->diskhash = NULL;
+            } 
+          }
+          
+          retry = 1;
+          asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
+          while(retry == 1) {
+            retry = system(tmp);
+            if(retry == 1) {
+              LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
+              pthread_sleep(3);
+            }
+          }
+          gk_free((void **)&tmp, LTERM);
+
+          retry = 1;
+          asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
+          while(retry == 1) {
+            retry = system(tmp);
+            if(retry == 1) {
+              LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
+              pthread_sleep(3);
+            }
+          }
+          gk_free((void **)&tmp, LTERM);
     
-    RDLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
-    keyslist = hash_GetKeys(ServerState.dtionaries);
-    if(list_Size(keyslist) > 0) {
-      for(i=0; keyslist && i<list_Size(keyslist); i++) {
-
-        p = hash_Get(ServerState.dtionaries, (void *)list_GetIth(keyslist,i,NULL), -1, NULL);
-        /* hash_Get returns a pointer to an address.  this sets dict equal to that address */
-        memcpy(&dict, p, sizeof(dict_t *));
-
-        asprintf(&needle,"%s.toksrv.journal",dict->name);
-
-        /* only get the disk lock, allowing cache hits to continue */
-        FAIL_IFTRUE(hhash_disk_wr_lock(dict->dict),"Failed to get disk rw lock");
-        retry = 1;
-        while(retry == 1) {
-          retry = !db_Close(dict->dict->diskhash);
-          if(retry == 1) {
-            LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
-            pthread_sleep(3);
+          retry = 1;
+          while(retry == 1) {
+            dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+            retry = (dict->dict->diskhash == NULL);
+    
+            if(retry == 1) {
+              LOGMSG("Failed to re-open dictionary.  Trying again in 3 seconds.");
+              pthread_sleep(3);
+            }
           }
-          else {
-            dict->dict->diskhash = NULL;
-          } 
-        }
-        
-        retry = 1;
-        asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
-        while(retry == 1) {
-          retry = system(tmp);
-          if(retry == 1) {
-            LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
-            pthread_sleep(3);
+          //LOGMSG1("Dictionary %s backed up successfully.",dict->name);
+    
+          /* delete journals and free memory */
+          n = scandir64(ServerState.journaldir,&eps,jselect,alphasort64);
+          for(j=0; j<n; j++) {
+            if(strstr(eps[j]->d_name, needle) != NULL) {
+              asprintf(&toremove, "%s/%s", ServerState.journaldir, eps[j]->d_name);
+              unlink(toremove);
+            }
+            free(eps[j]);
           }
+          free(eps);
+    
+          hhash_disk_unlock(dict->dict);
+    
+          //printf("-------Backed up Dictionary to %s.bak\n",dict->filename);
+          gk_free((void **)&needle, LTERM);
         }
-        gk_free((void **)&tmp, LTERM);
-
-        retry = 1;
-        asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
-        while(retry == 1) {
-          retry = system(tmp);
-          if(retry == 1) {
-            LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
-            pthread_sleep(3);
-          }
-        }
-        gk_free((void **)&tmp, LTERM);
-  
-        retry = 1;
-        while(retry == 1) {
-          dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-          retry = (dict->dict->diskhash == NULL);
-  
-          if(retry == 1) {
-            LOGMSG("Failed to re-open dictionary.  Trying again in 3 seconds.");
-            pthread_sleep(3);
-          }
-        }
-        //LOGMSG1("Dictionary %s backed up successfully.",dict->name);
-  
-        /* delete journals and free memory */
-        n = scandir64(ServerState.journaldir,&eps,jselect,alphasort64);
-        for(j=0; j<n; j++) {
-          if(strstr(eps[j]->d_name, needle) != NULL) {
-            asprintf(&toremove, "%s/%s", ServerState.journaldir, eps[j]->d_name);
-            unlink(toremove);
-          }
-          free(eps[j]);
-        }
-        free(eps);
-  
-        hhash_disk_unlock(dict->dict);
-  
-        //printf("-------Backed up Dictionary to %s.bak\n",dict->filename);
-        gk_free((void **)&needle, LTERM);
+        RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
       }
-      RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
     }
+    else {
+      //LOGMSG("Skipping auto-backup of dictionaries (disabled)");
+    }
+    UNLOCK_OR_FAIL(&ServerState.srvstate_mutex);
   }
 
   ERROR_EXIT:
@@ -1311,7 +1363,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
       fprintf(CFGFILE,"rfilename=%s\n",    rdict_filename);
       gk_fclose(CFGFILE);
       dict->rfilename = rdict_filename;
-      dict->rdict      = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+      dict->rdict     = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
 
       /* insert everything into the reverse dictionary */
       cursor = db_CursorOpen(dict->dict->diskhash);
@@ -1324,8 +1376,9 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
       db_CursorClose(cursor);
     }
     else {
-      dict->rdict      = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+      dict->rdict = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
     }
+    LOGMSG1("Opened reverse dictionary: %s\n",dict->rfilename);
   }
   dict_ClearJournals(env, dict);
 

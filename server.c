@@ -243,6 +243,14 @@ int MultiThreadedServer()
                               "S:S", 
                               "This method deletes a dictionary.", 
                               NULL);
+  xmlrpc_registry_add_method2(&env, registry, "ts.PauseBackup", &dict_pause_backup, 
+                              "S:S", 
+                              "This method pauses the dictionary backup thread until ts.ResumeBackup is called.", 
+                              NULL);
+  xmlrpc_registry_add_method2(&env, registry, "ts.ResumeBackup", &dict_resume_backup, 
+                              "S:S", 
+                              "This method resumes the dictionary backup thread.", 
+                              NULL);
   xmlrpc_registry_add_method2(&env, registry, "ts.DictGetMeta", &dict_Get_Meta, 
                               "S:S", 
                               "This method returns meta information about a dictionary.", 
