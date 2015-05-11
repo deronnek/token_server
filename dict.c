@@ -213,6 +213,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   dict->delstopwords = del_stop;
 
   dict->ninserts     = 0;
+  dict->ninserts_at_backup = 0;
   dict->cachehit     = 0;
   dict->cachemiss    = 0;
   dict->cacherequest = 0;
@@ -1201,71 +1202,77 @@ void *dict_backup(void *void_env)
           /* hash_Get returns a pointer to an address.  this sets dict equal to that address */
           memcpy(&dict, p, sizeof(dict_t *));
 
-          asprintf(&needle,"%s.toksrv.journal",dict->name);
+          if(dict->ninserts_at_backup != dict->ninserts) {
+            printf("Backing up %s: %"PRId64" %"PRId64"\n", dict->name, dict->ninserts, dict->ninserts_at_backup);
+            asprintf(&needle,"%s.toksrv.journal",dict->name);
+            /* only get the disk lock, allowing cache hits to continue */
+            FAIL_IFTRUE(hhash_disk_wr_lock(dict->dict),"Failed to get disk rw lock");
+            retry = 1;
+            while(retry == 1) {
+              retry = !db_Close(dict->dict->diskhash);
+              if(retry == 1) {
+                LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
+                pthread_sleep(3);
+              }
+              else {
+                dict->dict->diskhash = NULL;
+              } 
+            }
+            
+            retry = 1;
+            asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
+            while(retry == 1) {
+              retry = system(tmp);
+              if(retry == 1) {
+                LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
+                pthread_sleep(3);
+              }
+            }
+            gk_free((void **)&tmp, LTERM);
 
-          /* only get the disk lock, allowing cache hits to continue */
-          FAIL_IFTRUE(hhash_disk_wr_lock(dict->dict),"Failed to get disk rw lock");
-          retry = 1;
-          while(retry == 1) {
-            retry = !db_Close(dict->dict->diskhash);
-            if(retry == 1) {
-              LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
-              pthread_sleep(3);
+            retry = 1;
+            asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
+            while(retry == 1) {
+              retry = system(tmp);
+              if(retry == 1) {
+                LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
+                pthread_sleep(3);
+              }
             }
-            else {
-              dict->dict->diskhash = NULL;
-            } 
-          }
-          
-          retry = 1;
-          asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
-          while(retry == 1) {
-            retry = system(tmp);
-            if(retry == 1) {
-              LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
-              pthread_sleep(3);
+            gk_free((void **)&tmp, LTERM);
+      
+            retry = 1;
+            while(retry == 1) {
+              dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+              retry = (dict->dict->diskhash == NULL);
+      
+              if(retry == 1) {
+                LOGMSG("Failed to re-open dictionary.  Trying again in 3 seconds.");
+                pthread_sleep(3);
+              }
             }
-          }
-          gk_free((void **)&tmp, LTERM);
-
-          retry = 1;
-          asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
-          while(retry == 1) {
-            retry = system(tmp);
-            if(retry == 1) {
-              LOGMSG("Failed to backup dictionary.  Trying again in 3 seconds.");
-              pthread_sleep(3);
+            //LOGMSG1("Dictionary %s backed up successfully.",dict->name);
+      
+            /* delete journals and free memory */
+            n = scandir64(ServerState.journaldir,&eps,jselect,alphasort64);
+            for(j=0; j<n; j++) {
+              if(strstr(eps[j]->d_name, needle) != NULL) {
+                asprintf(&toremove, "%s/%s", ServerState.journaldir, eps[j]->d_name);
+                unlink(toremove);
+              }
+              free(eps[j]);
             }
+            free(eps);
+      
+            hhash_disk_unlock(dict->dict);
+      
+            //printf("-------Backed up Dictionary to %s.bak\n",dict->filename);
+            gk_free((void **)&needle, LTERM);
+            dict->ninserts_at_backup = dict->ninserts;
           }
-          gk_free((void **)&tmp, LTERM);
-    
-          retry = 1;
-          while(retry == 1) {
-            dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-            retry = (dict->dict->diskhash == NULL);
-    
-            if(retry == 1) {
-              LOGMSG("Failed to re-open dictionary.  Trying again in 3 seconds.");
-              pthread_sleep(3);
-            }
+          else {
+            printf("No inserts since last backup of %s\n", dict->name);
           }
-          //LOGMSG1("Dictionary %s backed up successfully.",dict->name);
-    
-          /* delete journals and free memory */
-          n = scandir64(ServerState.journaldir,&eps,jselect,alphasort64);
-          for(j=0; j<n; j++) {
-            if(strstr(eps[j]->d_name, needle) != NULL) {
-              asprintf(&toremove, "%s/%s", ServerState.journaldir, eps[j]->d_name);
-              unlink(toremove);
-            }
-            free(eps[j]);
-          }
-          free(eps);
-    
-          hhash_disk_unlock(dict->dict);
-    
-          //printf("-------Backed up Dictionary to %s.bak\n",dict->filename);
-          gk_free((void **)&needle, LTERM);
         }
         RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
       }
@@ -1306,12 +1313,14 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
     exit(EXIT_FAILURE);
   }
 
-  dict->dict         = NULL;
-  dict->stopdelim    = gk_strdup("");
-  dict->stopwords    = gk_strdup("");
-  dict->addstopwords = gk_strdup("");
-  dict->delstopwords = gk_strdup("");
-  dict->rfilename    = NULL;
+  dict->dict               = NULL;
+  dict->stopdelim          = gk_strdup("");
+  dict->stopwords          = gk_strdup("");
+  dict->addstopwords       = gk_strdup("");
+  dict->delstopwords       = gk_strdup("");
+  dict->rfilename          = NULL;
+  dict->ninserts           = 0;
+  dict->ninserts_at_backup = 0;
 
   dict_ReadConfigFile(dict_config, dict);
   

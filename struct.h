@@ -39,6 +39,7 @@ typedef struct {
   int64_t cachemiss;
   int64_t cacherequest;
   int64_t ninserts;
+  int64_t ninserts_at_backup;
 
   char *stopwords;
   char *stopdelim;
