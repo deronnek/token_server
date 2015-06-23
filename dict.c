@@ -159,6 +159,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   dict->stophash= NULL;
   xmlrpc_value *ret = NULL;
   int rc;
+  char *tmp = NULL;
 
   dict->dict     = NULL;
   dict->rdict    = NULL;
@@ -235,8 +236,30 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   dict->cachemiss    = 0;
   dict->cacherequest = 0;
 
-  dict->dict         = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-  dict->rdict        = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+  /* create an empty dictionary */
+  dict->dict         = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
+  hhash_Close(dict->dict);
+
+  /* create a backup dictionary so deltas can be merged properly */
+  asprintf(&tmp,"%s.bak",dict->filename);
+
+  if(gk_fexists(tmp) == 0) {
+    gk_free((void **)&tmp, LTERM);
+    asprintf(&tmp, "cp %s %s.bak", dict->filename, dict->filename);
+    rc = system(tmp);
+    asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
+    rc = system(tmp);
+    gk_free((void **)&tmp, LTERM);
+
+    if(rc == 1) 
+      errexit("Failed to create backup dictionary.\n");
+  }
+  else {
+    gk_free((void **)&tmp, LTERM);
+  }
+
+  dict->dict         = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
+  dict->rdict        = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
   dict->deltadict    = deltadict_Open(dict);
 
   if(dostop == 1) {
@@ -1056,7 +1079,7 @@ void dict_restore(xmlrpc_env *env, dict_t *dict)
   retry = 1;
   while(retry == 1) {
     //dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-    dict->dict = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+    dict->dict = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
     retry = (dict->dict->diskhash == NULL);
 
     if(retry == 1) {
@@ -1102,7 +1125,7 @@ void dict_restore(xmlrpc_env *env, dict_t *dict)
     /* re-open dictionary */
     retry = 1;
     while(retry == 1) {
-      dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+      dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
       retry = (dict->dict->diskhash == NULL);
  
       if(retry == 1) {
@@ -1345,7 +1368,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
     else {
       dict->stophash = NULL;
     }
-    dict->dict       = hhash_Open(dict->filename,  dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+    dict->dict       = hhash_Open(dict->filename,  dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
     dict->deltadict  = deltadict_Open(dict);
 
     /* if we don't have a reverse-dictionary, migrate this dict to the new version*/
@@ -1355,7 +1378,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
       fprintf(CFGFILE,"rfilename=%s\n",    rdict_filename);
       gk_fclose(CFGFILE);
       dict->rfilename = rdict_filename;
-      dict->rdict     = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+      dict->rdict     = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
 
       /* insert everything into the reverse dictionary */
       cursor = db_CursorOpen(dict->dict->diskhash);
@@ -1368,7 +1391,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
       db_CursorClose(cursor);
     }
     else {
-      dict->rdict = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+      dict->rdict = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE|DBI_LARGESIZE);
     }
     LOGMSG1("Opened reverse dictionary: %s\n",dict->rfilename);
   }
