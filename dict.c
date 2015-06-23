@@ -90,6 +90,21 @@ xmlrpc_value *dict_SetStem(xmlrpc_env *const env, xmlrpc_value *const params, vo
 #endif 
 
 /*******************************************************************************/
+/*! \brief This function opens a new database object for storing delta terms for
+           a dictionary since last closing a delta dictionary                  */
+/*******************************************************************************/
+db_t *deltadict_Open(dict_t *dict) 
+{
+  struct timeval tv;
+  db_t *ret = NULL;
+  char *delta_filename = NULL;
+  gettimeofday(&tv, NULL);
+  asprintf(&delta_filename, "%s_%ld.delta", dict->filename, (long)tv.tv_sec);
+  ret = db_Open(delta_filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+  return ret;
+}
+
+/*******************************************************************************/
 /*! \brief This function creates a dictionary object.
 \ingroup API
 
@@ -160,7 +175,9 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
 
   FAIL_IFTRUE(env->fault_occurred, "Initial parameter passing failed.");
 
+  printf("Trying to get lock\n");
   RWLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 1;
+  printf("Got lock\n");
   if(hash_Exists(ServerState.dtionaries, dict_name, -1)) {
     RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 0;
     asprintf(&r_string,"A dictionary named %s already exists.  Please choose a different name.\n",dict_name);
@@ -220,6 +237,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
 
   dict->dict         = hhash_Open(dict->filename, dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
   dict->rdict        = db_Open(dict->rfilename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+  dict->deltadict    = deltadict_Open(dict);
 
   if(dostop == 1) {
     dict->stophash   = stoplist_create(gk_strdup(stoplist), stopdelim, gk_strdup(add_stop), gk_strdup(del_stop));
@@ -252,6 +270,7 @@ xmlrpc_value *dict_Create(xmlrpc_env *const env, xmlrpc_value *const params, voi
   return ret;
 
   ERROR_EXIT:
+  printf("FAILED TO GET LOCK\n");
     if(dict->dict)     hhash_Close(dict->dict);
     if(dict->rdict)    db_Close(dict->rdict);
     if(dict->stophash) hash_Destroy(dict->stophash);
@@ -339,6 +358,7 @@ xmlrpc_value *dict_Delete(xmlrpc_env *const env, xmlrpc_value *const params, voi
 
   hhash_Close(dict->dict);
   db_Close(dict->rdict);
+  db_Close(dict->deltadict);
   hash_Destroy(dict->stophash);
 
   unlink(dict->configfile);
@@ -1032,36 +1052,6 @@ void dict_restore(xmlrpc_env *env, dict_t *dict)
     }
   }
 
-  asprintf(&tmp,"%s.bak", dict->filename);
-  if(gk_fexists(tmp)) {
-    /* restore from backup */
-    gk_free((void **)&tmp, LTERM);
-    asprintf(&tmp,"cp %s.bak %s", dict->filename, dict->filename);
-    retry = 1;
-    while(retry == 1) {
-      retry = system(tmp);
-      if(retry == 1) {
-        LOGMSG1("Failed to restore dictionary %s.  Trying again in 3 seconds.",dict->name);
-        pthread_sleep(3);
-      }
-    }
-    gk_free((void **)&tmp, LTERM);
-
-    asprintf(&tmp,"cp %s.bak %s", dict->configfile, dict->configfile);
-    retry = 1;
-    while(retry == 1) {
-      retry = system(tmp);
-      if(retry == 1) {
-        LOGMSG1("Failed to restore dictionary %s.  Trying again in 3 seconds.",dict->name);
-        pthread_sleep(3);
-      }
-    }
-    gk_free((void **)&tmp, LTERM);
-  }
-  else {
-    gk_free((void **)&tmp, LTERM);
-  }
-
   /* open dictionary */
   retry = 1;
   while(retry == 1) {
@@ -1092,19 +1082,6 @@ void dict_restore(xmlrpc_env *env, dict_t *dict)
       }
     }
   }
-
-  /* create new backup */
-  LOGMSG1("Backing up %s",dict->filename);
-  asprintf(&tmp,"cp %s %s.bak", dict->filename, dict->filename);
-  retry = 1;
-  while(retry == 1) {
-    retry = system(tmp);
-    if(retry == 1) {
-      LOGMSG1("Failed to backup dictionary %s.  Trying again in 3 seconds.",dict->name);
-      pthread_sleep(3);
-    }
-  }
-  gk_free((void **)&tmp, LTERM);
 
   retry = 1;
   asprintf(&tmp,"cp %s %s.bak", dict->configfile, dict->configfile);
@@ -1186,8 +1163,6 @@ void *dict_backup(void *void_env)
   char *toremove = NULL;
 
   while(1) {
-    /* sleep first so we don't automatically create a backup at startup */
-    pthread_sleep(1800);
     //pthread_sleep(10);
     //
     LOCK_OR_FAIL(&ServerState.srvstate_mutex);
@@ -1209,16 +1184,17 @@ void *dict_backup(void *void_env)
             FAIL_IFTRUE(hhash_disk_wr_lock(dict->dict),"Failed to get disk rw lock");
             retry = 1;
             while(retry == 1) {
-              retry = !db_Close(dict->dict->diskhash);
+              retry = !db_Close(dict->deltadict);
               if(retry == 1) {
                 LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
                 pthread_sleep(3);
               }
               else {
-                dict->dict->diskhash = NULL;
+                dict->deltadict = deltadict_Open(dict);
               } 
             }
             
+            /*
             retry = 1;
             asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
             while(retry == 1) {
@@ -1229,6 +1205,7 @@ void *dict_backup(void *void_env)
               }
             }
             gk_free((void **)&tmp, LTERM);
+            */
 
             retry = 1;
             asprintf(&tmp, "cp %s %s.bak", dict->configfile, dict->configfile);
@@ -1241,6 +1218,7 @@ void *dict_backup(void *void_env)
             }
             gk_free((void **)&tmp, LTERM);
       
+            /*
             retry = 1;
             while(retry == 1) {
               dict->dict->diskhash = db_Open(dict->filename, DBI_FLUSHALL|TOKSERVER_DBTYPE);
@@ -1251,6 +1229,7 @@ void *dict_backup(void *void_env)
                 pthread_sleep(3);
               }
             }
+            */
             //LOGMSG1("Dictionary %s backed up successfully.",dict->name);
       
             /* delete journals and free memory */
@@ -1274,13 +1253,15 @@ void *dict_backup(void *void_env)
             printf("No inserts since last backup of %s\n", dict->name);
           }
         }
-        RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
       }
+      RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock);
     }
     else {
       //LOGMSG("Skipping auto-backup of dictionaries (disabled)");
     }
     UNLOCK_OR_FAIL(&ServerState.srvstate_mutex);
+    /* sleep last so we automatically create a backup at startup */
+    pthread_sleep(1800);
   }
 
   ERROR_EXIT:
@@ -1339,6 +1320,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
     dict_restore(env, dict);
   }
   else {
+    
   /* create a backup dictionary if we don't have one */
     asprintf(&tmp,"%s.bak",dict->filename);
 
@@ -1364,6 +1346,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
       dict->stophash = NULL;
     }
     dict->dict       = hhash_Open(dict->filename,  dict->cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
+    dict->deltadict  = deltadict_Open(dict);
 
     /* if we don't have a reverse-dictionary, migrate this dict to the new version*/
     if(dict->rfilename == NULL) {
@@ -1464,167 +1447,17 @@ void dict_loadall(xmlrpc_env *env)
 /*! @}*/
 
 
-
-
-#if 0
-char *dict_getname_fromfilename(char *fname) { /* {{{ */
-  pcre *dict_re;
-  const char *pcre_errptr;
-  int pcre_erroffset;
-  pcre_extra re_extra;
-  int tovector[30];
-  char *pattern = ".*/(.*?)\\.toksrv\\.dictionary";
-  //char *matchme = "/somedir/otherdir/./dname.toksrv.dictionary";
-  char *matchme = fname;
-  char *word    = NULL;
-  int rc;
-
-  dict_re = pcre_compile(pattern, PCRE_CASELESS|PCRE_EXTENDED, &pcre_errptr,
-                       &pcre_erroffset, NULL);
-  if (dict_re == NULL) {
-    error_SetString("%s: pcre_compile failed for: %s. Error: %s\n", __func__, pattern, pcre_errptr);
-    goto ERROR;
-
-  }
-  // Should include this eventually (makes it faster):
-  //       pcre_extra *pcre_study(const pcre *code, int options const char **errptr);
-
-  /* Set the extra flags for the matches */
-  re_extra.flags = PCRE_EXTRA_MATCH_LIMIT|PCRE_EXTRA_MATCH_LIMIT_RECURSION;
-  re_extra.match_limit           = 100000;
-  re_extra.match_limit_recursion = 4000;
-
-  rc = pcre_exec(dict_re, &re_extra, matchme, strlen(matchme), 0, 0, tovector, 30);
-
-  if (rc == PCRE_ERROR_NOMATCH) {
-    goto ERROR;
-  }
-
-  if (rc <= 0) {
-    error_SetString("%s:dict_re: pcre_exec failed. Error: %d\n", __func__, rc);
-    goto ERROR;
-  }
-
-  /* A match was found */
-  if (tovector[3]-tovector[2] > 0) {
-    word = PCRE_GET_MATCH(matchme, tovector, 1);
-  }
-
-  ERROR:
-    // This code gets executed regardless 
-    if (dict_re) pcre_free(dict_re);
-
-  return word;
-} /* }}} */
-#endif
-
-#if 0
-void *flush_dict(void *void_env)  
-{ /* {{{ */
-  xmlrpc_env *const env = (xmlrpc_env *const)void_env;
-  int retry;
-  /* 
-    Every 60 seconds, lock, close out the database, re-open the database, 
-    unlock, and go back to sleep. 
-  */
-  while(1) {
-    /* keep trying until we get the lock */
-    FAIL_IFTRUE(hhash_disk_wr_lock(ServerState.dict),"Failed to get disk rw lock");
-    retry = 1;
-    while(retry == 1) {
-      retry = !db_Close(ServerState.dict->diskhash);
-      if(retry == 1) {
-        LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
-        pthread_sleep(3);
-      }
-      else {
-        ServerState.dict->diskhash = NULL;
-      }
-    }
-
-    retry = 1;
-    while(retry == 1) {
-      ServerState.dict = hhash_Open(ServerState.dictfile, ServerState.cachesize, DBI_FLUSHALL|TOKSERVER_DBTYPE);
-      retry = (ServerState.dict == NULL);
-      if(retry == 1) {
-        LOGMSG("Failed to re-open dictionary.  Trying again in 3 seconds.");
-        pthread_sleep(3);
-      }
-    }
-
-    LOGMSG("Dictionary flushed.");
-
-    /* keep trying until we release the lock */
-    hhash_disk_unlock(ServerState.dict);
-    //printf("\n\n Flushed Dictionary\n\n");
-    pthread_sleep(60);
-  }
-  ERROR_EXIT:
-    return NULL;
-} /* }}} */
-#endif
-
 /*
  * You must obtain a read-write lock on ServerState.srvstate_rwlock before entering
  * this function.  Creates a backup journal file, but has to close ServerState.JFILE 
  * to do this. 
  */
-#if 0
-void backup_journal(xmlrpc_env *env) 
-{ /* {{{ */
-  char tmp[2048];
-  int retry;
 
-  if(ServerState.JFILE != NULL)
-    gk_fclose(ServerState.JFILE);
-
-  //sprintf(tmp, "cp %s %s.bak", ServerState.journalfile, ServerState.journalfile);
-  sprintf(tmp, "%s.bak", ServerState.journalfile);
-  retry = 1;
-  while(retry == 1) {
-    retry = copy_file(ServerState.journalfile,tmp);
-    if(retry == 1) {
-      LOGMSG("Failed to backup journal.  Trying again in 3 seconds.");
-      pthread_sleep(3);
-    }
-  }
-  ServerState.JFILE = gk_fopen(ServerState.journalfile, "a", ServerState.journalfile);
-  LOGMSG("Backed up journal.");
-  return;
-
-  //printf("Backed up journal: %s\n",tmp);
-} /* }}} */
-#endif
 
 /* 
   Should not need to be rewritten for the new journal techniques, as we don't
   maintain journal backups anymore.
 */
-#if 0
-void restore_journal(xmlrpc_env *env) 
-{ /* {{{ */ 
-#if 0
-  char tmp[2048]; 
-  int retry;
-  if(ServerState.JFILE != NULL)
-    gk_fclose(ServerState.JFILE);
-
-  sprintf(tmp,"cp %s.bak %s", ServerState.journalfile, ServerState.journalfile);
-  retry = 1;
-  while(retry == 1) {
-    retry = system(tmp);
-    if(retry == 1) {
-      LOGMSG("Failed to restore journal.  Trying again in 3 seconds.");
-      pthread_sleep(3);
-    }
-  }
-  ServerState.JFILE = gk_fopen(ServerState.journalfile,"a","updateDict journal file");
-  LOGMSG("Restored Journal.");
-  printf("Restored Journal\n");
-#endif
-  errexit("Write restore_journal before you call it.\n");
-} /* }}} */
-#endif
 
 
 /* probably don't need this either... */

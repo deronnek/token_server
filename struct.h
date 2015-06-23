@@ -29,6 +29,7 @@ typedef struct {
   char *rfilename;
   hhash_t *dict;
   db_t *rdict;
+  db_t *deltadict;
   char *tokregex;
   hash_t *stophash;
 

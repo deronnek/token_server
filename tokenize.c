@@ -573,6 +573,8 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
 
         FAILD_IFTRUE(hhash_Put(dict->dict, word, -1, (char *)&nwords, sizeof(int64_t)) == 0,
                   "Failed to add word '%s' to the dictionary.\n",(char *)word);
+        FAILD_IFTRUE(db_Insert(dict->deltadict, word, -1, (char *)&nwords, sizeof(int64_t)) == 0,
+                  "Failed to add word '%s' to the deltadictionary.\n",(char *)word);
         FAILD_IFTRUE(db_Insert(dict->rdict, (char *)&nwords, sizeof(int64_t), word, -1) == 0,
                   "Failed to add word '%s' to the reverse dictionary.\n",(char *)word);
 
@@ -583,6 +585,7 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
         if(dict->ninserts%1000 == 0) {
           dict->ninserts = 0;
 
+          /*
           hhash_disk_wr_lock(dict->dict);
           hhash_mem_wr_lock(dict->dict);
 
@@ -590,6 +593,7 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
 
           hhash_disk_unlock(dict->dict);
           hhash_mem_unlock(dict->dict);
+          */
         }
       }
       else {
