@@ -658,7 +658,7 @@ xmlrpc_value *dict_heartbeat(xmlrpc_env *const env, xmlrpc_value *const params, 
   FAIL_IFTRUE(env->fault_occurred, "Initial parameter passing failed.");
 
   
-  /*  {{{ Lock and get dict pointer set properly based on the name sent */
+  /* {{{ Lock and get dict pointer set properly based on the name sent */
   RDLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 1;
   if(dict_name == NULL || !hash_Exists(ServerState.dtionaries, dict_name, -1)) {
     asprintf(&r_string, "Dictionary %s does not exist.\n",dict_name);
@@ -1209,15 +1209,24 @@ void *dict_backup(void *void_env)
             while(retry == 1) {
               retry = !db_Close(dict->deltadict);
               if(retry == 1) {
-                LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
+                LOGMSG("Failed to close delta dictionary.  Trying again in 3 seconds.");
                 pthread_sleep(3);
               }
               else {
                 dict->deltadict = deltadict_Open(dict);
               } 
             }
-            
+            /* These are no longer necessary as the consolidate delta script brings the backup up-to-date. */
             /*
+            retry = 1;
+            while(retry == 1) {
+              retry = !db_Close(dict->dict->diskhash);
+              if(retry == 1) {
+                LOGMSG("Failed to close dictionary.  Trying again in 3 seconds.");
+                pthread_sleep(3);
+              } 
+            }
+            
             retry = 1;
             asprintf(&tmp, "cp -a %s %s.bak", dict->filename, dict->filename);
             while(retry == 1) {
@@ -1241,6 +1250,7 @@ void *dict_backup(void *void_env)
             }
             gk_free((void **)&tmp, LTERM);
       
+            /* These are no longer necessary as the consolidate delta script brings the backup up-to-date. */
             /*
             retry = 1;
             while(retry == 1) {
@@ -1284,7 +1294,8 @@ void *dict_backup(void *void_env)
     }
     UNLOCK_OR_FAIL(&ServerState.srvstate_mutex);
     /* sleep last so we automatically create a backup at startup */
-    pthread_sleep(1800);
+    pthread_sleep(3600);
+    //pthread_sleep(600);
   }
 
   ERROR_EXIT:

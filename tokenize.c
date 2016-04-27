@@ -201,7 +201,8 @@ fvector_t *tokenize_freq_known(dict_t *dict, xmlrpc_env *const env, char *totok,
   hhash_time = gk_WClockSeconds();
   term_count    = termify(env, dict, totok, ret_tokens);
   hhash_time = gk_WClockSeconds() - hhash_time;
-  LOGMSG1("termify took: %lf",hhash_time);
+  if(hhash_time > 0.01)
+    LOGMSG1("termify took: %lf",hhash_time);
 
   known_terms   = idterms(env, dict, term_count, nwhash, update);
 
@@ -493,7 +494,8 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
   RWLOCK_OR_FAIL(&dict->dictstate_rwlock); 
   lock_time = gk_WClockSeconds() - lock_time;
 
-  LOGMSG1("Acquiring dictstate lock for update_dict took:   %lf",lock_time);
+  if(lock_time > 0.01)
+    LOGMSG1("Acquiring dictstate lock for update_dict took:   %lf",lock_time);
 
   //has_lock = 1;
   /* need the lock first so size gets read correctly */
@@ -804,10 +806,14 @@ xmlrpc_value *tokenize_idlist(xmlrpc_env *const env, char *instring, dict_t *dic
   }
   comms_time = gk_WClockSeconds() - comms_time;
 
-  LOGMSG1("Tokenizing known words time:   %lf",known_time);
-  LOGMSG1("Tokenizing new words time:     %lf",new_time);
-  LOGMSG1("Tokenizing update dict time:   %lf",update_dict_time);
-  LOGMSG1("Tokenizing communication time: %lf",comms_time);
+  if(known_time > 0.01)
+    LOGMSG1("Tokenizing known words time:   %lf",known_time);
+  if(new_time > 0.01)
+    LOGMSG1("Tokenizing new words time:     %lf",new_time);
+  if(update_dict_time > 0.01)
+    LOGMSG1("Tokenizing update dict time:   %lf",update_dict_time);
+  if(comms_time > 0.01)
+    LOGMSG1("Tokenizing communication time: %lf",comms_time);
 
 
   list_Destroy(l);
@@ -1009,7 +1015,8 @@ xmlrpc_value *Tokenize(xmlrpc_env *const env, xmlrpc_value *const params, void *
 
   tot_time = gk_WClockSeconds() - tot_time;
 
-  LOGMSG1("Total tokenize call time: %lf",tot_time);
+  if(tot_time > 0.01)
+    LOGMSG1("Total tokenize call time: %lf",tot_time);
 
   gk_free((void **)&instring, &toktype, &dict_name, LTERM);
   return ret;
