@@ -645,14 +645,17 @@ xmlrpc_value *dict_heartbeat(xmlrpc_env *const env, xmlrpc_value *const params, 
   char *dict_name = NULL;
   void *p = NULL;
   char *r_string  = NULL;
-  int read_ok  = 0;
-  int write_ok = 0;
+  int read_ok   = 0;
+  int write_ok  = 0;
+  int delete_ok = 0;
+  int idSanity  = 0;
   dict_t *dict;
   xmlrpc_value *ret = NULL;
   char *test_str;
   int64_t nwords;
   int64_t *r_data;
   int r_dsize;
+  int hhash_lock_obtained = 0;
 
   xmlrpc_decompose_value(env, params, "({s:s,*})", "name",   &dict_name);
   FAIL_IFTRUE(env->fault_occurred, "Initial parameter passing failed.");
@@ -687,8 +690,8 @@ xmlrpc_value *dict_heartbeat(xmlrpc_env *const env, xmlrpc_value *const params, 
 
 
   hhash_disk_wr_lock(dict->dict);
+  hhash_lock_obtained = 1;
 
-  //fprintf(stderr,"lock obtained\n");
   nwords   = db_Nrecords(dict->dict->diskhash);
 
   test_str = rand_str(100); 
@@ -700,27 +703,29 @@ xmlrpc_value *dict_heartbeat(xmlrpc_env *const env, xmlrpc_value *const params, 
 
   //fprintf(stderr,"KDR heartbeat testing with: %s %"PRId64"\n",test_str,nwords);
   write_ok = db_Insert(dict->dict->diskhash, test_str, -1, (char *)&nwords, sizeof(int64_t));
-  read_ok  = db_Get(dict->dict->diskhash,    test_str, -1, (char **)&r_data, &r_dsize);
+  read_ok  = db_Get   (dict->dict->diskhash, test_str, -1, (char **)&r_data, &r_dsize);
 
-  // FOR TESTING ONLY: (should force a "bad" to be returned)
-  //db_Close(dict->dict->diskhash);
+  idSanity = (read_ok && *r_data == nwords); 
 
-  if(read_ok && *r_data == nwords) {
-    read_ok = 1;
+  if (write_ok) {
+    delete_ok = db_Delete(dict->dict->diskhash, test_str, -1);
   }
-  else {
-    read_ok = 0;
-  }
-
-  if(write_ok) {
-    write_ok = db_Delete(dict->dict->diskhash, test_str, -1);
-  }
-
-  gk_free((void **)&test_str, &r_data, LTERM);
 
   hhash_disk_unlock(dict->dict);
 
-  return xmlrpc_build_value(env, "{s:s}", "status",   (read_ok&&write_ok ? "ok" : "bad"));
+  ret =  xmlrpc_build_value(env, "{s:s,s:s,s:s,s:s,s:s,s:s}", 
+      "status", (read_ok&&write_ok ? "ok" : "bad"), 
+      "hhash lock obtained", (hhash_lock_obtained? "yes":"no"), 
+      "read ok", (read_ok?"yes":"no"),
+      "write ok", (write_ok?"yes":"no"), 
+      "delete ok", (delete_ok?"yes":"no"),
+      "idSanity ok", (idSanity?"yes":"no")
+      );
+      //"test string", test_str);
+
+  gk_free((void **)&test_str, &r_data, LTERM);
+
+  return ret;
 
 ERROR_EXIT:
     if (haslock) RWUNLOCK_OR_FAIL(&ServerState.dtionaries_rwlock); haslock = 0;
@@ -1308,7 +1313,7 @@ dict_t *dict_load(xmlrpc_env *env, char *dict_config)
   int rc;
   char *tmp = NULL;
   char *rdict_filename = NULL;
-  dict_t *dict = (dict_t *)gk_malloc(sizeof(dict_t),"dictionary allocate");
+  dict_t *dict = (dict_t *)calloc(1, sizeof(dict_t));
   FILE *CFGFILE;
   char *data;
   char *key;
