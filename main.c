@@ -1,6 +1,6 @@
 /*!
 \file  
-\brief The driver for the CF xml-rpc server 
+\brief The driver for the xml-rpc server 
 
 \date 11/24/2007
 \author George
@@ -20,10 +20,10 @@ void init_defaults(params_t *params) {
   params->loginfo          = 0;
   params->backup_enabled   = 1;
   params->logfile          = NULL;
-  params->configfile       = gk_strdup("/srvdata/tokenization_server/cfg/tokserver.cfg");
-  params->journaldir       = gk_strdup("/srvdata/tokenization_server/journals");
-  params->dictdir          = gk_strdup("/srvdata/tokenization_server/dict");
-  params->logfile          = gk_strdup("/srvdata/tokenization_server/log/tokserver.log");
+  params->configfile       = gk_strdup("/safestore/tokenization_server/cfg/tokserver.cfg");
+  params->journaldir       = gk_strdup("/safestore/tokenization_server/journals");
+  params->dictdir          = gk_strdup("/safestore/tokenization_server/dict");
+  params->logfile          = gk_strdup("/safestore/tokenization_server/log/tokserver.log");
   params->dbtest           = gk_strdup("/opt/bin/isdbcorrupt");
   params->default_stoplist = stoplist_default();
 }

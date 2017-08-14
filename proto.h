@@ -3,7 +3,6 @@
  *
  * This file conatins function prototypes
  *
- * $Id: proto.h 4258 2008-04-15 23:21:56Z karypis $
  *
  */
 
@@ -118,8 +117,6 @@ extern int stem(struct stemmer * z, char * b, int k);
 xmlrpc_value *Tokenize(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
 xmlrpc_value *TokenizeSegments(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
 xmlrpc_value *ReverseTokenize(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo, void *const callInfo);
-//xmlrpc_value *Tokenize_update(xmlrpc_env *const env, xmlrpc_value *const params, void *const srvinfo);
-//void createDictMain(ctrlType *ctrl);
 void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t **r_transdict);
 
 /* stoplist.c */

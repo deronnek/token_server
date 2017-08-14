@@ -2,7 +2,6 @@
 \file  
 \brief Various routines associated with creating a daemon
 
-\date 11/24/2007
 \author George
 \version \verbatim $Id: daemon.c 2760 2007-11-26 20:17:39Z karypis $  \endverbatim
 */
@@ -21,8 +20,6 @@ void Daemonize()
   char filename[MAX_STRLEN];
   FILE *PIDOUT;
   /* Fork off the parent process */
-//printf("XXX Daemon.\n");
-
   pid = fork();
   if (pid < 0) {
     openlog("toksrv", LOG_CONS|LOG_PERROR|LOG_PID, LOG_DAEMON);
@@ -51,7 +48,6 @@ void Daemonize()
 
   /* Close out the stdin and stdout file descriptors */
   close(STDIN_FILENO);
-//  close(STDOUT_FILENO);
 
   /* Redirect the stderr to go to the logfile */
   if (gk_fexists(ServerState.logfile)) {

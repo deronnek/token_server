@@ -20,5 +20,5 @@ void corrupt_dict(dict_t *dict) {
 
 void corrupt_journal() {
   printf("\n\nCorrupting journal...\n\n");
-  //fprintf(ServerState.JFILE,"badDAtea\n");
+  fprintf(ServerState.JFILE,"badDAtea\n");
 }

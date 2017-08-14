@@ -201,7 +201,8 @@ fvector_t *tokenize_freq_known(dict_t *dict, xmlrpc_env *const env, char *totok,
   hhash_time = gk_WClockSeconds();
   term_count    = termify(env, dict, totok, ret_tokens);
   hhash_time = gk_WClockSeconds() - hhash_time;
-  LOGMSG1("termify took: %lf",hhash_time);
+  if(hhash_time > 0.01)
+    LOGMSG1("termify took: %lf",hhash_time);
 
   known_terms   = idterms(env, dict, term_count, nwhash, update);
 
@@ -486,8 +487,16 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
   FILE *JFILE = NULL;
   struct timeval timestamp;
   double journal_time;
+  double lock_time;
 
+
+  lock_time = gk_WClockSeconds();
   RWLOCK_OR_FAIL(&dict->dictstate_rwlock); 
+  lock_time = gk_WClockSeconds() - lock_time;
+
+  if(lock_time > 0.01)
+    LOGMSG1("Acquiring dictstate lock for update_dict took:   %lf",lock_time);
+
   //has_lock = 1;
   /* need the lock first so size gets read correctly */
   nwords = hhash_Size(dict->dict);
@@ -573,6 +582,8 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
 
         FAILD_IFTRUE(hhash_Put(dict->dict, word, -1, (char *)&nwords, sizeof(int64_t)) == 0,
                   "Failed to add word '%s' to the dictionary.\n",(char *)word);
+        FAILD_IFTRUE(db_Insert(dict->deltadict, word, -1, (char *)&nwords, sizeof(int64_t)) == 0,
+                  "Failed to add word '%s' to the deltadictionary.\n",(char *)word);
         FAILD_IFTRUE(db_Insert(dict->rdict, (char *)&nwords, sizeof(int64_t), word, -1) == 0,
                   "Failed to add word '%s' to the reverse dictionary.\n",(char *)word);
 
@@ -583,6 +594,7 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
         if(dict->ninserts%1000 == 0) {
           dict->ninserts = 0;
 
+          /*
           hhash_disk_wr_lock(dict->dict);
           hhash_mem_wr_lock(dict->dict);
 
@@ -590,6 +602,7 @@ void update_dict(dict_t *dict, xmlrpc_env *const env, hash_t *newwords, hash_t *
 
           hhash_disk_unlock(dict->dict);
           hhash_mem_unlock(dict->dict);
+          */
         }
       }
       else {
@@ -722,11 +735,12 @@ xmlrpc_value *tokenize_frequency(xmlrpc_env *const env, char *instring, dict_t *
   gk_free((void **)&v->vector, &v, LTERM);
 
   list_Destroy(tokens);
-
+/*
   LOGMSG1("Tokenizing known words time:   %lf",known_time);
   LOGMSG1("Tokenizing new words time:     %lf",new_time);
   LOGMSG1("Tokenizing update dict time:   %lf",update_dict_time);
   LOGMSG1("Tokenizing communication time: %lf",comms_time);
+  */
 
   return ret;
 /* }}} */
@@ -744,23 +758,40 @@ xmlrpc_value *tokenize_idlist(xmlrpc_env *const env, char *instring, dict_t *dic
   xmlrpc_value *tokenslist = NULL;
   xmlrpc_value *idslist    = NULL;
 
+  double new_time         = 0.0;
+  double comms_time       = 0.0;
+  double known_time       = 0.0;
+  double update_dict_time = 0.0;
+
   tokens = list_Create();
   if (do_update == 1) {
+    known_time = gk_WClockSeconds();
     l = tokenize_idlist_known(dict, env, instring, &newwords, tokens, do_update);
+    known_time = gk_WClockSeconds() - known_time;
+
     if(newwords != NULL) {
+      update_dict_time = gk_WClockSeconds();
       update_dict(dict,env,newwords,&transdict);
+      update_dict_time = gk_WClockSeconds() - update_dict_time;
+
+      new_time = gk_WClockSeconds();
       tokenize_idlist_new(l, transdict);
+      new_time = gk_WClockSeconds() - new_time;
+
       hash_Destroy(transdict);
       hash_Destroy(newwords);
     }
   }
   else {
     //l = tokenize_idlist_only_known(dict, instring, tokens);
+    known_time = gk_WClockSeconds();
     l = tokenize_idlist_known(dict, env, instring, &newwords, tokens, do_update);
+    known_time = gk_WClockSeconds() - known_time;
   }
 
   idslist = create_xmlrpc_array_i64list(env, l);
 
+  comms_time = gk_WClockSeconds();
   ret     = xmlrpc_struct_new(env);
   if(ret_tokens != 0) {
     tokenslist = create_xmlrpc_array_stringlist(env, tokens);
@@ -773,6 +804,17 @@ xmlrpc_value *tokenize_idlist(xmlrpc_env *const env, char *instring, dict_t *dic
     xmlrpc_struct_set_value(env, ret, "ids", idslist);
     xmlrpc_DECREF(idslist);
   }
+  comms_time = gk_WClockSeconds() - comms_time;
+
+  if(known_time > 0.01)
+    LOGMSG1("Tokenizing known words time:   %lf",known_time);
+  if(new_time > 0.01)
+    LOGMSG1("Tokenizing new words time:     %lf",new_time);
+  if(update_dict_time > 0.01)
+    LOGMSG1("Tokenizing update dict time:   %lf",update_dict_time);
+  if(comms_time > 0.01)
+    LOGMSG1("Tokenizing communication time: %lf",comms_time);
+
 
   list_Destroy(l);
   list_Destroy(tokens);
@@ -973,7 +1015,8 @@ xmlrpc_value *Tokenize(xmlrpc_env *const env, xmlrpc_value *const params, void *
 
   tot_time = gk_WClockSeconds() - tot_time;
 
-  LOGMSG1("Total tokenize call time: %lf",tot_time);
+  if(tot_time > 0.01)
+    LOGMSG1("Total tokenize call time: %lf",tot_time);
 
   gk_free((void **)&instring, &toktype, &dict_name, LTERM);
   return ret;

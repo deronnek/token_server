@@ -4,9 +4,7 @@
 
 This file parses the command line arguments and provides a short help.
 
-\date 11/24/2007
-\author George
-\version\verbatim $Id: cmdline.c 4172 2008-04-04 13:11:36Z karypis $ \endverbatim
+\author Kevin
 */
 
 

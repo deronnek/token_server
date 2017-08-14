@@ -1,10 +1,6 @@
 /*!
 \file  
 \brief Various utility functions for the server
-
-\date 11/16/2007
-\author George
-\version \verbatim $Id: utils.c 2805 2007-12-01 23:08:55Z karypis $  \endverbatim
 */
 
 #include "tokserver.h"
@@ -19,10 +15,12 @@
 char *rand_str(int len)
 {
   int i;
+  unsigned int seedp = 37;
   char *s = gk_malloc(len*sizeof(char), "rand_str");
-  for (i = 0; i < len; i++) {
-    s[i] = 'a' + (rand() % 26);
+  for (i = 0; i < len-1; i++) {
+    s[i] = 'a' + (rand_r(&seedp) % 26);
   }
+  s[len-1] = '\0';
   return s;
 }
 
