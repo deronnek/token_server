@@ -3,10 +3,6 @@
  *
  * This file contains various data structure definitions used by the server
  *
- * Started 11/16/2007
- * George
- *
- * $Id: struct.h 2812 2007-12-03 01:46:37Z karypis $
  */
 
 #ifndef _MTCFSRV_STRUCT_H_

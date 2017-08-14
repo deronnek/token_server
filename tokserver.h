@@ -1,10 +1,6 @@
 /*!
 \file  tokserver.h
 \brief Top-level header file for the xml-rpc server 
-
-\date 11/16/2007
-\author George
-\version \verbatim $Id: tokserver.h 2757 2007-11-26 14:26:32Z karypis $ \endverbatim
 */
 
 #include <GKlib.h>

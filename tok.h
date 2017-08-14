@@ -4,7 +4,6 @@
 
 \date   Started 11/6/99
 \author George
-\version\verbatim $Id: mtCF.h 6900 2009-05-23 20:06:04Z karypis $ \endverbatim
 */
 
 #ifndef __mtCF_h__

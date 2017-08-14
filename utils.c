@@ -1,10 +1,6 @@
 /*!
 \file  
 \brief Various utility functions for the server
-
-\date 11/16/2007
-\author George
-\version \verbatim $Id: utils.c 2805 2007-12-01 23:08:55Z karypis $  \endverbatim
 */
 
 #include "tokserver.h"

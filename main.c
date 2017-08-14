@@ -1,6 +1,6 @@
 /*!
 \file  
-\brief The driver for the CF xml-rpc server 
+\brief The driver for the xml-rpc server 
 
 \date 11/24/2007
 \author George

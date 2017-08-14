@@ -4,7 +4,6 @@
 
 \date 10/21/2009
 \author Kevin
-\version \verbatim $Id: server.c 4258 2008-04-15 23:21:56Z karypis $  \endverbatim
 */
 
 #include "tokserver.h"

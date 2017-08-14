@@ -1173,7 +1173,7 @@ xmlrpc_value *dict_resume_backup(xmlrpc_env *const env, xmlrpc_value *const para
 }
 
 /*******************************************************************************
-*! Every 30 minutes (1800 seconds), lock a database, close out the database, copy 
+*! Every 60 minutes (3600 seconds), lock a database, close out the database, copy 
 *  the database to a backup file, clear its respective journals, re-open the 
 *  database, unlock, repeat for each database, and go back to sleep. 
 *******************************************************************************/

@@ -1,10 +1,8 @@
 /*!
 \file  defs.h
-\brief Various constants used by the program
+\brief Various constants used by the tokenization server
 
-\date 6/24/2007
-\author George
-\version \verbatim $Id: defs.h 4171 2008-04-04 12:59:51Z karypis $ \endverbatim
+\author Kevin
 */
 
 
